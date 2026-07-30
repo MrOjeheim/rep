@@ -20,14 +20,12 @@ if not df.empty:
 else:
     sparade_ovningar = ["Bänkpress", "Knäböj", "Marklyft"]
 
-# --- Skapa flikar för att hålla appen städad ---
+# --- Skapa flikar ---
 flik_logga, flik_grafer, flik_arkiv = st.tabs(["📝 Logga pass", "📈 Utveckling", "🗄️ Arkiv"])
 
 with flik_logga:
-    # Välj datum (Förinställt på idag)
     valt_datum = st.date_input("Datum för passet", datetime.today())
     
-    # Välj eller lägg till ny övning
     val = st.selectbox("Välj övning", ["-- Lägg till ny övning --"] + sparade_ovningar)
     
     if val == "-- Lägg till ny övning --":
@@ -45,7 +43,6 @@ with flik_logga:
             for i in range(1, int(antal_sets) + 1):
                 kolumner = st.columns(2)
                 with kolumner[0]:
-                    # value=None gör att rutan är helt blank när du startar
                     vikt = st.number_input(f"Set {i} - Vikt (kg)", min_value=0.0, step=2.5, value=None, key=f"vikt_{i}")
                 with kolumner[1]:
                     reps = st.number_input(f"Set {i} - Reps", min_value=0, step=1, value=None, key=f"reps_{i}")
@@ -57,7 +54,6 @@ with flik_logga:
             if spara:
                 nya_rader = []
                 for data in set_data:
-                    # Kontrollera att varken vikt eller reps är tomt
                     if data["Reps"] is not None and data["Reps"] > 0 and data["Vikt (kg)"] is not None: 
                         nya_rader.append({
                             "Datum": valt_datum.strftime("%Y-%m-%d"),
@@ -75,13 +71,12 @@ with flik_logga:
                 else:
                     st.warning("Inga fullständiga sets (både vikt och reps) ifyllda.")
 
-# Läs in igen för att grafer och arkiv ska uppdateras blixtsnabbt
+# Läs in igen för grafer och arkiv
 df_uppdaterad = pd.read_csv(FILE_NAME)
 
 with flik_grafer:
     st.subheader("Kalkylerat 1RM per övning")
     if not df_uppdaterad.empty:
-        # Filtrera ut Set 1 för att beräkna maxkapaciteten
         df_set1 = df_uppdaterad[df_uppdaterad["Set"] == 1].copy()
         
         if not df_set1.empty:
@@ -90,13 +85,10 @@ with flik_grafer:
                 axis=1
             )
             df_plot = df_set1.drop_duplicates(subset=["Datum", "Övning"], keep="last")
-            
-            # Skapa en separat graf för varje enskild övning
             unika_ovningar = df_plot["Övning"].unique()
             
             for ovning in unika_ovningar:
                 st.markdown(f"### {ovning}")
-                # Sätt Datum som X-axel för grafen
                 df_ovning = df_plot[df_plot["Övning"] == ovning].set_index("Datum")
                 st.line_chart(df_ovning[["1RM"]])
         else:
@@ -105,10 +97,32 @@ with flik_grafer:
         st.info("Grafer dyker upp när du loggar första passet.")
 
 with flik_arkiv:
-    st.subheader("All din träningshistorik")
+    st.subheader("Träningshistorik")
     if not df_uppdaterad.empty:
-        # Sortera datan så att de nyaste passen hamnar högst upp
-        df_sorterad = df_uppdaterad.sort_values(by=["Datum", "Övning", "Set"], ascending=[False, True, True])
-        st.dataframe(df_sorterad, use_container_width=True)
+        unika_ovningar_arkiv = df_uppdaterad["Övning"].unique()
+        
+        for ovning in unika_ovningar_arkiv:
+            st.markdown(f"### {ovning}")
+            
+            # Hämta enbart data för aktuell övning
+            df_ovning = df_uppdaterad[df_uppdaterad["Övning"] == ovning].copy()
+            
+            # Rensar eventuella oavsiktliga dubbletter (om du sparat samma set två gånger samma datum)
+            df_ovning = df_ovning.drop_duplicates(subset=["Datum", "Set"], keep="last")
+            
+            # Snurrar datan så varje set blir egna kolumner (Pivot)
+            df_pivot = df_ovning.pivot(index="Datum", columns="Set", values=["Vikt (kg)", "Reps"])
+            
+            # Formaterar kolumnnamnen snyggt för att gruppera Set 1, Set 2 osv.
+            df_pivot.columns = df_pivot.columns.swaplevel(0, 1)
+            df_pivot.sort_index(axis=1, level=0, inplace=True)
+            df_pivot.columns = [f"Set {col[0]} - {col[1]}" for col in df_pivot.columns]
+            
+            # Återställer Datum som kolumn, sorterar nyast först och byter ut tomma fält mot bindestreck
+            df_pivot = df_pivot.reset_index().sort_values(by="Datum", ascending=False)
+            df_pivot = df_pivot.fillna("-")
+            
+            # Visa den snygga tabellen utan vänstermarginalens index-siffror (hide_index)
+            st.dataframe(df_pivot, use_container_width=True, hide_index=True)
     else:
         st.info("Ditt arkiv är tomt än så länge.")
