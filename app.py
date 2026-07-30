@@ -9,14 +9,13 @@ st.title("GymTracker 🏋️")
 
 FILE_NAME = "workout_log.csv"
 
-# 1. Skapa filen med den nya strukturen om den inte finns
+# 1. Skapa filen om den inte finns
 if not os.path.exists(FILE_NAME):
     pd.DataFrame(columns=["Datum", "Övning", "Set", "Vikt (kg)", "Reps"]).to_csv(FILE_NAME, index=False)
 
-# Läs in befintlig data
 df = pd.read_csv(FILE_NAME)
 
-# Hämta unika övningar från din historik (så du slipper skriva dem varje gång)
+# Hämta unika övningar från din historik
 if not df.empty:
     sparade_ovningar = df["Övning"].unique().tolist()
 else:
@@ -39,7 +38,6 @@ if vald_ovning:
         st.write(f"Fyll i resultat för **{vald_ovning}**")
         
         set_data = []
-        # Skapa inmatningsfält för det antal sets du valt
         for i in range(1, int(antal_sets) + 1):
             kolumner = st.columns(2)
             with kolumner[0]:
@@ -51,13 +49,11 @@ if vald_ovning:
             
         spara = st.form_submit_button("Spara Passet")
         
-        # När du trycker på spara
         if spara:
             dagens_datum = datetime.now().strftime("%Y-%m-%d")
             nya_rader = []
             
             for data in set_data:
-                # Spara bara set där du faktiskt skrivit in reps
                 if data["Reps"] > 0: 
                     nya_rader.append({
                         "Datum": dagens_datum,
@@ -69,25 +65,39 @@ if vald_ovning:
             
             if nya_rader:
                 ny_df = pd.DataFrame(nya_rader)
-                # Om filen är helt tom, skriv med rubriker, annars lägg bara till datan
                 skriv_rubrik = not os.path.exists(FILE_NAME) or os.stat(FILE_NAME).st_size == 0
                 ny_df.to_csv(FILE_NAME, mode='a', header=skriv_rubrik, index=False)
                 st.success(f"Sparade {len(nya_rader)} sets av {vald_ovning}!")
             else:
                 st.warning("Inga reps ifyllda, inget sparades.")
 
-# 4. Visa historik
+# 4. Visa grafer för 1RM (Baserat på Set 1)
 st.divider()
-st.subheader("Dagens logg")
+st.subheader("Utveckling (Kalkylerat 1RM)")
 
-# Läs in filen på nytt för att historiken ska uppdateras direkt när du klickar spara
+# Läs in igen så grafen uppdateras direkt vid sparning
 df_uppdaterad = pd.read_csv(FILE_NAME)
-dagens_datum = datetime.now().strftime("%Y-%m-%d")
 
 if not df_uppdaterad.empty:
-    dagens_pass = df_uppdaterad[df_uppdaterad["Datum"] == dagens_datum]
-    if not dagens_pass.empty:
-        # Visar tabellen snyggt anpassad för skärmens bredd
-        st.dataframe(dagens_pass, use_container_width=True)
+    # Filtrera så vi enbart tittar på "Set 1"
+    df_set1 = df_uppdaterad[df_uppdaterad["Set"] == 1].copy()
+    
+    if not df_set1.empty:
+        # Beräkna uppskattat 1RM med Epleys formel
+        df_set1["1RM"] = df_set1.apply(
+            lambda rad: rad["Vikt (kg)"] if rad["Reps"] == 1 else rad["Vikt (kg)"] * (1 + rad["Reps"] / 30.0), 
+            axis=1
+        )
+        
+        # Om flera pass registreras samma dag för samma övning, behåll bara den senaste datan
+        df_plot = df_set1.drop_duplicates(subset=["Datum", "Övning"], keep="last")
+        
+        # Forma om datan så att Streamlit kan rita upp flera linjer (en per övning)
+        df_pivot = df_plot.pivot(index="Datum", columns="Övning", values="1RM")
+        
+        # Rita ut grafen
+        st.line_chart(df_pivot)
     else:
-        st.info("Inget loggat idag ännu.")
+        st.info("När du sparar ditt första set nummer 1 för en övning kommer grafen att synas här.")
+else:
+    st.info("Din träningsgraf dyker upp här när du loggar första passet.")
