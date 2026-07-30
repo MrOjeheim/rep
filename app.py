@@ -104,25 +104,39 @@ with flik_arkiv:
         for ovning in unika_ovningar_arkiv:
             st.markdown(f"### {ovning}")
             
-            # Hämta enbart data för aktuell övning
             df_ovning = df_uppdaterad[df_uppdaterad["Övning"] == ovning].copy()
-            
-            # Rensar eventuella oavsiktliga dubbletter (om du sparat samma set två gånger samma datum)
             df_ovning = df_ovning.drop_duplicates(subset=["Datum", "Set"], keep="last")
-            
-            # Snurrar datan så varje set blir egna kolumner (Pivot)
             df_pivot = df_ovning.pivot(index="Datum", columns="Set", values=["Vikt (kg)", "Reps"])
             
-            # Formaterar kolumnnamnen snyggt för att gruppera Set 1, Set 2 osv.
             df_pivot.columns = df_pivot.columns.swaplevel(0, 1)
             df_pivot.sort_index(axis=1, level=0, inplace=True)
             df_pivot.columns = [f"Set {col[0]} - {col[1]}" for col in df_pivot.columns]
             
-            # Återställer Datum som kolumn, sorterar nyast först och byter ut tomma fält mot bindestreck
             df_pivot = df_pivot.reset_index().sort_values(by="Datum", ascending=False)
             df_pivot = df_pivot.fillna("-")
             
-            # Visa den snygga tabellen utan vänstermarginalens index-siffror (hide_index)
             st.dataframe(df_pivot, use_container_width=True, hide_index=True)
+            
+        # --- RADERA FUNKTION ---
+        st.divider()
+        st.subheader("🗑️ Hantera felaktiga inmatningar")
+        st.write("Välj ett pass nedan för att radera hela loggen (alla sets) för den övningen på det valda datumet.")
+        
+        del_ovning = st.selectbox("1. Välj övning att radera från", ["-- Välj --"] + list(unika_ovningar_arkiv))
+        if del_ovning != "-- Välj --":
+            datum_for_ovning = df_uppdaterad[df_uppdaterad["Övning"] == del_ovning]["Datum"].unique()
+            del_datum = st.selectbox("2. Välj datum att radera", ["-- Välj --"] + list(datum_for_ovning))
+            
+            if del_datum != "-- Välj --":
+                # primary gör knappen röd/färgstark
+                if st.button(f"Radera {del_ovning} ({del_datum})", type="primary"):
+                    # Skapa en ny tabell som innehåller allt UTOM det du valt att radera
+                    df_rensad = df_uppdaterad[~((df_uppdaterad["Övning"] == del_ovning) & (df_uppdaterad["Datum"] == del_datum))]
+                    
+                    # Spara den rensade tabellen över den gamla
+                    df_rensad.to_csv(FILE_NAME, index=False)
+                    
+                    # Rensa arbetsminnet och starta om sidan direkt
+                    st.rerun()
     else:
         st.info("Ditt arkiv är tomt än så länge.")
