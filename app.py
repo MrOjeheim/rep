@@ -70,7 +70,7 @@ if vald_ovning:
             if nya_rader:
                 ny_df = pd.DataFrame(nya_rader)
                 # Om filen är helt tom, skriv med rubriker, annars lägg bara till datan
-                skriv_rubrik = inte os.path.exists(FILE_NAME) or os.stat(FILE_NAME).st_size == 0
+                skriv_rubrik = not os.path.exists(FILE_NAME) or os.stat(FILE_NAME).st_size == 0
                 ny_df.to_csv(FILE_NAME, mode='a', header=skriv_rubrik, index=False)
                 st.success(f"Sparade {len(nya_rader)} sets av {vald_ovning}!")
             else:
