@@ -8,7 +8,6 @@ from supabase import create_client, Client
 st.set_page_config(page_title="GymTracker", page_icon="🏋️")
 st.title("GymTracker 🏋️")
 
-# Initiera Supabase-klienten (körs bara en gång tack vare @st.cache_resource)
 @st.cache_resource
 def init_connection():
     url = st.secrets["SUPABASE_URL"]
@@ -17,16 +16,17 @@ def init_connection():
 
 supabase: Client = init_connection()
 
-# Funktion för att hämta all data från Supabase
 def fetch_data():
-    response = supabase.table("workout_log").select("*").execute()
-    if response.data:
-        return pd.DataFrame(response.data)
-    else:
-        # Returnera en tom DataFrame med rätt kolumner om databasen är tom
+    try:
+        response = supabase.table("workout_log").select("*").execute()
+        if response.data:
+            return pd.DataFrame(response.data)
+        else:
+            return pd.DataFrame(columns=["Datum", "Övning", "Set", "Vikt (kg)", "Reps"])
+    except Exception as e:
+        st.error(f"🚨 Databas-fel: {e}")
         return pd.DataFrame(columns=["Datum", "Övning", "Set", "Vikt (kg)", "Reps"])
 
-# Läs in datan när appen startar
 df = fetch_data()
 
 if not df.empty:
@@ -78,14 +78,12 @@ with flik_logga:
                         })
                 
                 if nya_rader:
-                    # Skicka datan till Supabase istället för CSV
                     supabase.table("workout_log").insert(nya_rader).execute()
                     st.success(f"Sparade {len(nya_rader)} sets av {vald_ovning} den {valt_datum.strftime('%Y-%m-%d')}!")
-                    st.rerun() # Laddar om sidan så att passet syns direkt i arkivet
+                    st.rerun()
                 else:
                     st.warning("Inga fullständiga sets (både vikt och reps) ifyllda.")
 
-# Läs in datan igen för att grafer och arkiv ska vara uppdaterade
 df_uppdaterad = fetch_data()
 
 with flik_grafer:
@@ -103,10 +101,27 @@ with flik_grafer:
             unika_ovningar = df_plot["Övning"].unique()
             
             for ovning in unika_ovningar:
-                st.markdown(f"### {ovning}")
+                st.divider() # Skapar en snygg linje mellan varje övning
                 
-                df_ovning = df_plot[df_plot["Övning"] == ovning].copy()
+                # Säkerställ att datan sorteras i tidsordning för att hitta "nuvarande"
+                df_ovning = df_plot[df_plot["Övning"] == ovning].sort_values("Datum").copy()
                 
+                # --- MATEMATIK FÖR KPI:ER ---
+                nuvarande_1rm = df_ovning.iloc[-1]["1RM"]
+                max_1rm = df_ovning["1RM"].max()
+                snitt_1rm = df_ovning["1RM"].mean()
+                
+                if nuvarande_1rm < max_1rm:
+                    procent = ((nuvarande_1rm - max_1rm) / max_1rm) * 100
+                    delta_text = f"{procent:.1f}% från PB ({max_1rm} kg)"
+                else:
+                    procent = ((nuvarande_1rm - snitt_1rm) / snitt_1rm) * 100
+                    delta_text = f"{procent:.1f}% över snittet ({snitt_1rm:.1f} kg)"
+                
+                # Visa den snygga indikatorn ovanför grafen
+                st.metric(label=f"🏆 {ovning}", value=f"{nuvarande_1rm} kg", delta=delta_text)
+                
+                # --- GRAF ---
                 min_y = float(df_ovning["1RM"].min() - 10)
                 max_y = float(df_ovning["1RM"].max() + 10)
                 
@@ -116,15 +131,7 @@ with flik_grafer:
                 )
                 
                 line = base.mark_line(point=True)
-                
-                text = base.mark_text(
-                    align='left',
-                    baseline='bottom',
-                    dx=5,
-                    dy=-5
-                ).encode(
-                    text=alt.Text('1RM:Q', format='.1f')
-                )
+                text = base.mark_text(align='left', baseline='bottom', dx=5, dy=-5).encode(text=alt.Text('1RM:Q', format='.1f'))
                 
                 chart = (line + text).properties(height=300)
                 st.altair_chart(chart, use_container_width=True)
@@ -150,20 +157,15 @@ with flik_arkiv:
                 return f"{reps} x {vikt}"
             
             df_ovning["Resultat"] = df_ovning.apply(format_set, axis=1)
-            
             df_pivot = df_ovning.pivot(index="Datum", columns="Set", values="Resultat")
-            
             df_pivot.columns = [f"Set {col}" for col in df_pivot.columns]
-            
             df_pivot = df_pivot.reset_index().sort_values(by="Datum", ascending=False)
             df_pivot = df_pivot.fillna("-")
             
             st.dataframe(df_pivot, use_container_width=True, hide_index=True)
             
-        # --- RADERA FUNKTION (Uppdaterad för Supabase) ---
         st.divider()
         st.subheader("🗑️ Hantera felaktiga inmatningar")
-        st.write("Välj ett pass nedan för att radera hela loggen (alla sets) för den övningen på det valda datumet.")
         
         del_ovning = st.selectbox("1. Välj övning att radera från", ["-- Välj --"] + list(unika_ovningar_arkiv))
         if del_ovning != "-- Välj --":
@@ -172,7 +174,6 @@ with flik_arkiv:
             
             if del_datum != "-- Välj --":
                 if st.button(f"Radera {del_ovning} ({del_datum})", type="primary"):
-                    # Radera inlägget direkt i Supabase
                     supabase.table("workout_log").delete().eq("Övning", del_ovning).eq("Datum", del_datum).execute()
                     st.rerun()
     else:
