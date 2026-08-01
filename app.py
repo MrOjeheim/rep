@@ -1,20 +1,33 @@
 import streamlit as st
 import pandas as pd
-import os
 from datetime import datetime
-import altair as alt  # Ny import för att kunna bygga anpassade grafer!
+import altair as alt
+from supabase import create_client, Client
 
 # Sidinställningar
 st.set_page_config(page_title="GymTracker", page_icon="🏋️")
 st.title("GymTracker 🏋️")
 
-FILE_NAME = "workout_log.csv"
+# Initiera Supabase-klienten (körs bara en gång tack vare @st.cache_resource)
+@st.cache_resource
+def init_connection():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
 
-# 1. Skapa filen om den inte finns
-if not os.path.exists(FILE_NAME):
-    pd.DataFrame(columns=["Datum", "Övning", "Set", "Vikt (kg)", "Reps"]).to_csv(FILE_NAME, index=False)
+supabase: Client = init_connection()
 
-df = pd.read_csv(FILE_NAME)
+# Funktion för att hämta all data från Supabase
+def fetch_data():
+    response = supabase.table("workout_log").select("*").execute()
+    if response.data:
+        return pd.DataFrame(response.data)
+    else:
+        # Returnera en tom DataFrame med rätt kolumner om databasen är tom
+        return pd.DataFrame(columns=["Datum", "Övning", "Set", "Vikt (kg)", "Reps"])
+
+# Läs in datan när appen startar
+df = fetch_data()
 
 if not df.empty:
     sparade_ovningar = df["Övning"].unique().tolist()
@@ -65,15 +78,15 @@ with flik_logga:
                         })
                 
                 if nya_rader:
-                    ny_df = pd.DataFrame(nya_rader)
-                    skriv_rubrik = not os.path.exists(FILE_NAME) or os.stat(FILE_NAME).st_size == 0
-                    ny_df.to_csv(FILE_NAME, mode='a', header=skriv_rubrik, index=False)
+                    # Skicka datan till Supabase istället för CSV
+                    supabase.table("workout_log").insert(nya_rader).execute()
                     st.success(f"Sparade {len(nya_rader)} sets av {vald_ovning} den {valt_datum.strftime('%Y-%m-%d')}!")
+                    st.rerun() # Laddar om sidan så att passet syns direkt i arkivet
                 else:
                     st.warning("Inga fullständiga sets (både vikt och reps) ifyllda.")
 
-# Läs in igen för grafer och arkiv
-df_uppdaterad = pd.read_csv(FILE_NAME)
+# Läs in datan igen för att grafer och arkiv ska vara uppdaterade
+df_uppdaterad = fetch_data()
 
 with flik_grafer:
     st.subheader("Kalkylerat 1RM per övning")
@@ -84,7 +97,7 @@ with flik_grafer:
             df_set1["1RM"] = df_set1.apply(
                 lambda rad: rad["Vikt (kg)"] if rad["Reps"] == 1 else rad["Vikt (kg)"] * (1 + rad["Reps"] / 30.0), 
                 axis=1
-            ).round(1) # Avrundar till en decimal för snyggare etiketter
+            ).round(1)
             
             df_plot = df_set1.drop_duplicates(subset=["Datum", "Övning"], keep="last")
             unika_ovningar = df_plot["Övning"].unique()
@@ -94,30 +107,25 @@ with flik_grafer:
                 
                 df_ovning = df_plot[df_plot["Övning"] == ovning].copy()
                 
-                # Sätt y-axeln till +- 10 kg från minsta/största värdet
                 min_y = float(df_ovning["1RM"].min() - 10)
                 max_y = float(df_ovning["1RM"].max() + 10)
                 
-                # Bygg grafen med Altair
                 base = alt.Chart(df_ovning).encode(
                     x=alt.X('Datum:T', title='Datum'),
                     y=alt.Y('1RM:Q', scale=alt.Scale(domain=[max(0, min_y), max_y]), title='1RM (kg)')
                 )
                 
-                # Skapa linjen och punkterna
                 line = base.mark_line(point=True)
                 
-                # Lägg till textetiketterna vid varje punkt
                 text = base.mark_text(
                     align='left',
                     baseline='bottom',
-                    dx=5,  # Förskjutning i x-led så texten hamnar bredvid
-                    dy=-5  # Förskjutning i y-led
+                    dx=5,
+                    dy=-5
                 ).encode(
                     text=alt.Text('1RM:Q', format='.1f')
                 )
                 
-                # Slå ihop och rita ut
                 chart = (line + text).properties(height=300)
                 st.altair_chart(chart, use_container_width=True)
         else:
@@ -136,19 +144,15 @@ with flik_arkiv:
             df_ovning = df_uppdaterad[df_uppdaterad["Övning"] == ovning].copy()
             df_ovning = df_ovning.drop_duplicates(subset=["Datum", "Set"], keep="last")
             
-            # Funktion för att bygga ihop reps och vikt till "9 x 70"
             def format_set(rad):
-                # Tar bort .0 från vikten om det är ett heltal (t.ex. 70 istället för 70.0)
                 vikt = int(rad["Vikt (kg)"]) if rad["Vikt (kg)"] == int(rad["Vikt (kg)"]) else rad["Vikt (kg)"]
                 reps = int(rad["Reps"])
                 return f"{reps} x {vikt}"
             
             df_ovning["Resultat"] = df_ovning.apply(format_set, axis=1)
             
-            # Pivotera datan med den nya sammanslagna texten
             df_pivot = df_ovning.pivot(index="Datum", columns="Set", values="Resultat")
             
-            # Formatera om kolumnnamnen till "Set 1", "Set 2" osv.
             df_pivot.columns = [f"Set {col}" for col in df_pivot.columns]
             
             df_pivot = df_pivot.reset_index().sort_values(by="Datum", ascending=False)
@@ -156,7 +160,7 @@ with flik_arkiv:
             
             st.dataframe(df_pivot, use_container_width=True, hide_index=True)
             
-        # --- RADERA FUNKTION ---
+        # --- RADERA FUNKTION (Uppdaterad för Supabase) ---
         st.divider()
         st.subheader("🗑️ Hantera felaktiga inmatningar")
         st.write("Välj ett pass nedan för att radera hela loggen (alla sets) för den övningen på det valda datumet.")
@@ -168,8 +172,8 @@ with flik_arkiv:
             
             if del_datum != "-- Välj --":
                 if st.button(f"Radera {del_ovning} ({del_datum})", type="primary"):
-                    df_rensad = df_uppdaterad[~((df_uppdaterad["Övning"] == del_ovning) & (df_uppdaterad["Datum"] == del_datum))]
-                    df_rensad.to_csv(FILE_NAME, index=False)
+                    # Radera inlägget direkt i Supabase
+                    supabase.table("workout_log").delete().eq("Övning", del_ovning).eq("Datum", del_datum).execute()
                     st.rerun()
     else:
         st.info("Ditt arkiv är tomt än så länge.")
